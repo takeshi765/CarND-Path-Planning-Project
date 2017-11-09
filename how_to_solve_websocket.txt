@@ -1,0 +1,8 @@
+https://github.com/udacity/CarND-Extended-Kalman-Filter-Project/issues/49
+
+
+If you are using ubuntu 14.04, do the followings to install websocket properly.
+
+sudo add-apt-repository ppa:acooks/libwebsockets6
+sudo apt-get update
+sudo apt-get install libuv1.dev
