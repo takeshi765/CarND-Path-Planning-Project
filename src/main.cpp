@@ -160,6 +160,59 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+
+//vector<Vehicle> Vehicle::generate_predictions(int horizon) {
+//    /*
+//    Generates predictions for non-ego vehicles to be used
+//    in trajectory generation for the ego vehicle.
+//    */
+//	vector<Vehicle> predictions;
+//    for(int i = 0; i < horizon; i++) {
+//      float next_s = position_at(i);
+//      float next_v = 0;
+//      if (i < horizon-1) {
+//        next_v = position_at(i+1) - s;
+//      }
+//      predictions.push_back(Vehicle(this->lane, next_s, next_v, 0));
+//  	}
+//    return predictions;
+//
+//}
+
+class Vehicle {
+public:
+	int lane;
+	double s;
+	double v;
+	double a;
+	Vehicle();
+    Vehicle(int lane, double s, double v, double a){
+    	this->lane = lane;
+    	this->s = s;
+    	this->v = v;
+    	this->a = a;
+    };
+};
+
+double position_at(double s, double v, double a, int t) {
+    return s + v*t + a*t*t/2.0;
+}
+
+vector<Vehicle> generate_predictions(int lane, double s, double v, double a, int horizon){
+		vector<Vehicle> predictions;
+	    for(int i = 0; i < horizon; i++) {
+	    	double next_s = position_at(s, v, a, i);
+	    	double next_v = 0;
+	      if (i < horizon-1) {
+	        next_v = position_at(s, v, a, i+1) - s;
+	      }
+	      predictions.push_back(Vehicle(lane, next_s, next_v, 0.0));
+	  	}
+	    return predictions;
+}
+
+
+
 int main() {
   uWS::Hub h;
 
@@ -199,11 +252,11 @@ int main() {
 
   //start lane 1
   int lane = 1; //you need to add this parameter to lambda (h.onMessage ...)
-
+  int lane_change_count = 0;
   //Have a reference velocity to target
   double ref_vel = 0.0; //mph //you need to add this parameter to lambda (h.onMessage ...)
 
-  h.onMessage([&ref_vel, &lane, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&lane_change_count, &ref_vel, &lane, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -272,46 +325,101 @@ int main() {
           		car_s = end_path_s;
           	}
 
+          	double speed_limit_of_this_car = 49.5;
+          	double accerelation_value = 0.224; // 5m/s
           	bool too_close = false;
-
+          	vector<bool> too_close_lane = {false,false,false}; //distance (s in frenet) from other cars are closer than some threshold.
+          	double too_close_threshold = 30.0;
+          	vector<bool> speed_lover_lane = {false,false,false}; //existence of the car whose velocity is too high.
+          	double speed_lover_threshold = 50.0;
           	//find ref_v to use
+          	//TODO: consider cost function
           	for(int i = 0; i < sensor_fusion.size(); ++i)
           	{
           		//check i_th car is in my lane
-          		float d = sensor_fusion[i][6]; //i th car   6:d value
-          		if(d < (2+4*lane+2) && d> (2+4*lane-2))
-          		{
-          			double vx = sensor_fusion[i][3];
-          			double vy = sensor_fusion[i][4];
-          			double check_speed = sqrt(vx*vx+vy*vy); //magnitude of speed
-          			double check_car_s = sensor_fusion[i][5]; // 5: s value of the car
+				float d = sensor_fusion[i][6]; //i th car   6:d value
+				for(int temp_lane =0;temp_lane<3;temp_lane++){
+					if(d < (2+4*temp_lane+2) && d> (2+4*temp_lane-2))
+					{
+						double vx = sensor_fusion[i][3];
+						double vy = sensor_fusion[i][4];
+						double check_speed = sqrt(vx*vx+vy*vy); //magnitude of speed
+						double check_car_s = sensor_fusion[i][5]; // 5: s value of the car
 
-          			check_car_s+=((double)prev_size*0.02*check_speed);//if using previous points can project s value out, future car position?
-          			//check s values greater thatn mine and s gap
-          			if((check_car_s>car_s)&&((check_car_s-car_s)<30.0))
-          			{
-          				//Do some logic here, lower reference velocity so we don't crash into the car in front of us, could also flag to try to change lanes.
-          				//ref_vel = 29.5; //mph
-          				too_close=true;
+						check_car_s+=((double)prev_size*0.02*check_speed);//if using previous points can project s value out, future car position?
+						//check s values greater thatn mine and s gap
+						if((check_car_s>=car_s)&&((check_car_s-car_s)<30.0))
+						{
+							if(d < (2+4*lane+2) && d> (2+4*lane-2)){
+								too_close=true;
+							}
+						}
+						if(fabs(check_car_s-car_s)<30){
+							too_close_lane[temp_lane]=true;
+						}
 
-          			}
-          		}
+
+					}
+				}
+
+//          		//check i_th car is in my lane
+//          		float d = sensor_fusion[i][6]; //i th car   6:d value
+//          		if(d < (2+4*lane+2) && d> (2+4*lane-2))
+//          		{
+//          			double vx = sensor_fusion[i][3];
+//          			double vy = sensor_fusion[i][4];
+//          			double check_speed = sqrt(vx*vx+vy*vy); //magnitude of speed
+//          			double check_car_s = sensor_fusion[i][5]; // 5: s value of the car
+//
+//          			check_car_s+=((double)prev_size*0.02*check_speed);//if using previous points can project s value out, future car position?
+//          			//check s values greater thatn mine and s gap
+//          			if((check_car_s>car_s)&&((check_car_s-car_s)<30.0))
+//          			{
+//          				//Do some logic here, lower reference velocity so we don't crash into the car in front of us, could also flag to try to change lanes.
+//          				//ref_vel = 29.5; //mph
+//          				too_close=true;
+//
+//
+//          			}
+//          		}
           	}
+      		cout << "too close lane: ";
+      		for(size_t vi=0;vi<too_close_lane.size();vi++){
+      			cout << too_close_lane[vi] << ",";
+      		}
+      		cout << endl;
+
+      		string strategy="simple_distance_check";
 
           	if(too_close)
           	{
-          		ref_vel -= 0.224; // 5 m/s
+          		ref_vel -= accerelation_value; // 5 m/s
 
           		//TODO
-          		if(lane >0)
-  				{
-  					lane = 0;
-  				}
+          		if (strategy=="simple_distance_check"){
+          			// This strategy takes about 5 min 30 seconds.
+					lane_change_count+=1;
+					if((lane==0)&&(too_close_lane[1]==false)){
+						lane = 1;
+						cout << lane_change_count << " current lane 0 shift to 1" << endl;
+					}else if((lane==1)&&(too_close_lane[0]==false)){
+						lane = 0;
+						cout <<lane_change_count << " current lane 1 shift to 2" << endl;
+					}else if((lane==1)&&(too_close_lane[2]==false)){
+						lane = 2;
+						cout <<lane_change_count << " current lane 1 shift to 2" << endl;
+					}else if((lane==2)&&(too_close_lane[1]==false)){
+						lane = 1;
+						cout <<lane_change_count << " current lane 2 shift to 1" << endl;
+					}
+          		}else{
+
+          		}
 
           	}
-          	else if(ref_vel < 49.5)
+          	else if(ref_vel < speed_limit_of_this_car)
           	{
-          		ref_vel += 0.224;
+          		ref_vel += accerelation_value;
           	}
 
           	//create a list of widely spaced (x,y) waypoints, evenly spaced at 30m
